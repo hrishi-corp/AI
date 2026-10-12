@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Project HRISHI - Desk HUD</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body {
+      background-color: #030712;
+      color: #00f0ff;
+      font-family: 'Courier New', Courier, monospace;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+    #viewport-container { position: absolute; inset: 0; z-index: 1; }
+    #hud-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 16px;
+    }
+    .hud-header, .hud-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(3, 7, 18, 0.75);
+      border: 1px solid rgba(0, 240, 255, 0.3);
+      padding: 10px 16px;
+      border-radius: 6px;
+      backdrop-filter: blur(8px);
+      pointer-events: auto;
+    }
+    .status-badge {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #00ff66;
+      box-shadow: 0 0 8px #00ff66;
+      margin-right: 8px;
+    }
+    .btn {
+      background: rgba(0, 240, 255, 0.15);
+      border: 1px solid #00f0ff;
+      color: #00f0ff;
+      padding: 6px 14px;
+      font-family: inherit;
+      font-size: 11px;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .btn:active { background: #00f0ff; color: #000; }
+    #telemetry-panel {
+      position: absolute;
+      left: 16px;
+      top: 70px;
+      width: 260px;
+      background: rgba(3, 7, 18, 0.75);
+      border: 1px solid rgba(0, 240, 255, 0.3);
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      line-height: 1.6;
+      pointer-events: auto;
+      z-index: 10;
+    }
+    .telemetry-val { color: #fff; font-weight: bold; }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+  <div id="viewport-container"></div>
+
+  <div id="hud-overlay">
+    <header class="hud-header">
+      <div>
+        <span class="status-badge" id="net-badge"></span>
+        <strong style="letter-spacing: 2px;">PROJECT HRISHI // DESK HUD</strong>
+      </div>
+      <div>
+        <button class="btn" id="btn-ble">CONNECT WATCH (BLE)</button>
+        <button class="btn" id="btn-view" style="margin-left: 8px;">RESET ORBIT</button>
+      </div>
+    </header>
+
+    <div id="telemetry-panel">
+      <div style="border-bottom: 1px solid rgba(0,240,255,0.2); margin-bottom: 6px; padding-bottom: 4px;">
+        <strong>NODE TELEMETRY (ALPHA L4)</strong>
+      </div>
+      <div>CORE IP: <span class="telemetry-val">92.4.87.82</span></div>
+      <div>PORT: <span class="telemetry-val">8000</span></div>
+      <div>LAT/LON: <span class="telemetry-val" id="gps-val">LOCATING...</span></div>
+      <div>USERS TRACKED: <span class="telemetry-val" id="users-count">1</span></div>
+      <div>KINETIC LINK: <span class="telemetry-val" id="ble-status">DISCONNECTED</span></div>
+    </div>
+
+    <footer class="hud-footer">
+      <span style="font-size: 11px; opacity: 0.8;">SUBSIDIARIES: AIA CORP [STANDBY] | FINTECH [STANDBY]</span>
+      <span style="font-size: 11px; color: #7000ff;">SYSTEM STATUS: NOMINAL (120Hz)</span>
+    </footer>
+  </div>
+
+  <script>
+    const OCI_HOST = "92.4.87.82:8000";
+    let ws = null;
+    let scene, camera, renderer, globe, beaconsGroup;
+    let watchDevice = null;
+
+    // --- 1. Three.js 120Hz Holographic Globe Initialization ---
+    function init3D() {
+      const container = document.getElementById("viewport-container");
+      scene = new THREE.Scene();
+      
+      camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.z = 240;
+
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      container.appendChild(renderer.domElement);
+
+      // Spherical Wireframe Hologram Globe
+      const geometry = new THREE.SphereGeometry(70, 36, 36);
+      const material = new THREE.MeshBasicMaterial({
+        color: 0x00f0ff,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.35
+      });
+      globe = new THREE.Mesh(geometry, material);
+      scene.add(globe);
+
+      // Inner Dark Core
+      const coreGeo = new THREE.SphereGeometry(69, 32, 32);
+      const coreMat = new THREE.MeshBasicMaterial({ color: 0x030712 });
+      globe.add(new THREE.Mesh(coreGeo, coreMat));
+
+      beaconsGroup = new THREE.Group();
+      globe.add(beaconsGroup);
+
+      // Global Hub Beacons (Mumbai, Wall St, London, Tokyo)
+      addStaticBeacon(19.0760, 72.8777, "MUMBAI", 0x00f0ff);
+      addStaticBeacon(40.7128, -74.0060, "WALL_ST", 0x00ff66);
+      addStaticBeacon(51.5074, -0.1278, "LONDON", 0x7000ff);
+      addStaticBeacon(35.6762, 139.6503, "TOKYO", 0xffaa00);
+
+      window.addEventListener("resize", onWindowResize);
+      animate();
+    }
+
+    function latLonToVector3(lat, lon, radius) {
+      const phi = (90 - lat) * (Math.PI / 180);
+      const theta = (lon + 180) * (Math.PI / 180);
+      return new THREE.Vector3(
+        -(radius * Math.sin(phi) * Math.cos(theta)),
+        radius * Math.cos(phi),
+        radius * Math.sin(phi) * Math.sin(theta)
+      );
+    }
+
+    function addStaticBeacon(lat, lon, label, color) {
+      const pos = latLonToVector3(lat, lon, 70);
+      const geo = new THREE.SphereGeometry(1.4, 8, 8);
+      const mat = new THREE.MeshBasicMaterial({ color: color });
+      const pin = new THREE.Mesh(geo, mat);
+      pin.position.copy(pos);
+      beaconsGroup.add(pin);
+    }
+
+    function updateUserPin(userId, lat, lon) {
+      let pin = scene.getObjectByName("user_" + userId);
+      const pos = latLonToVector3(lat, lon, 71);
+      if (!pin) {
+        const geo = new THREE.SphereGeometry(2.0, 10, 10);
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff0055 });
+        pin = new THREE.Mesh(geo, mat);
+        pin.name = "user_" + userId;
+        globe.add(pin);
+      }
+      pin.position.copy(pos);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      globe.rotation.y += 0.0012;
+      renderer.render(scene, camera);
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    // --- 2. WebSocket Telemetry Gateway to OCI Core ---
+    function connectSocket() {
+      const badge = document.getElementById("net-badge");
+      ws = new WebSocket("ws://" + OCI_HOST + "/ws/phone_nord_node?token=ENCRYPTED_ALPHA_ROOT_TOKEN");
+
+      ws.onopen = () => {
+        badge.style.background = "#00ff66";
+        badge.style.boxShadow = "0 0 8px #00ff66";
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === "USER_GPS_UPDATE") {
+            updateUserPin(msg.user_id, msg.lat, msg.lon);
+          } else if (msg.type === "HUD_KINETIC_TRIGGER") {
+            if (msg.action === "ZOOM_IN") camera.position.z = Math.max(120, camera.position.z - 15);
+            if (msg.action === "ZOOM_OUT") camera.position.z = Math.min(300, camera.position.z + 15);
+          }
+        } catch (e) {}
+      };
+
+      ws.onclose = () => {
+        badge.style.background = "#ff0055";
+        badge.style.boxShadow = "0 0 8px #ff0055";
+        setTimeout(connectSocket, 3000);
+      };
+    }
+
+    // --- 3. GPS Ingestion Pipeline ---
+    function initGPS() {
+      if ("geolocation" in navigator) {
+        navigator.geolocation.watchPosition(
+          (pos) => {
+            const lat = pos.coords.latitude;
+            const lon = pos.coords.longitude;
+            document.getElementById("gps-val").innerText = lat.toFixed(4) + ", " + lon.toFixed(4);
+            updateUserPin(1, lat, lon);
+
+            // Report position to OCI Server
+            fetch("http://" + OCI_HOST + "/api/telemetry/geo", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                user_id: 1,
+                lat: lat,
+                lon: lon,
+                altitude: pos.coords.altitude || 0,
+                speed: pos.coords.speed || 0
+              })
+            }).catch(() => {});
+          },
+          (err) => console.warn(err),
+          { enableHighAccuracy: true, maximumAge: 5000 }
+        );
+      }
+    }
+
+    // --- 4. Web Bluetooth Kinetic Bridge for Watch ---
+    document.getElementById("btn-ble").addEventListener("click", async () => {
+      try {
+        watchDevice = await navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: ['heart_rate', 'battery_service', 0xfee0, 0xfee7]
+        });
+        document.getElementById("ble-status").innerText = "CONNECTED (" + watchDevice.name + ")";
+        document.getElementById("btn-ble").style.borderColor = "#00ff66";
+        document.getElementById("btn-ble").innerText = "WATCH PAIRED";
+      } catch (err) {
+        console.warn("BLE Pairing dismissed:", err);
+      }
+    });
+
+    document.getElementById("btn-view").addEventListener("click", () => {
+      camera.position.z = 240;
+    });
+
+    // Boot Subsystems
+    window.addEventListener("DOMContentLoaded", () => {
+      init3D();
+      connectSocket();
+      initGPS();
+    });
+  </script>
+</body>
+</html>
