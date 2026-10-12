@@ -347,18 +347,32 @@
       setDebug("CONNECTING...");
 
       try {
-        ws = new WebSocket("ws://" + OCI_HOST + "/ws/phone_nord_node?token=ENCRYPTED_ALPHA_ROOT_TOKEN");
+        const socketUrl = "ws://" + OCI_HOST + "/ws/phone_nord_node?token=ENCRYPTED_ALPHA_ROOT_TOKEN";
+        ws = new WebSocket(socketUrl);
 
         ws.onopen = () => {
           badge.style.background = "var(--neon-green)";
           badge.style.boxShadow = "0 0 10px var(--neon-green)";
-          setDebug("WS ONLINE");
+          setDebug("WS CONNECTED");
         };
 
-        ws.onerror = () => {
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === "SYSTEM_READY") {
+              setDebug(msg.role + " // ONLINE");
+            } else if (msg.type === "USER_GPS_UPDATE") {
+              updateUserPin(msg.lat, msg.lon);
+            }
+          } catch (e) {
+            console.log("Raw message:", event.data);
+          }
+        };
+
+        ws.onerror = (err) => {
           badge.style.background = "var(--neon-red)";
           badge.style.boxShadow = "0 0 10px var(--neon-red)";
-          setDebug("WS ERROR");
+          setDebug("WS SEC BLOCKED");
         };
 
         ws.onclose = () => {
