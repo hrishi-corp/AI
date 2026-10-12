@@ -2,156 +2,271 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Project HRISHI - Desk HUD</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>HRISHI</title>
+  <!-- Three.js + Touch Orbit Controls -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
-    body {
-      background-color: #030712;
-      color: #00f0ff;
-      font-family: 'Courier New', Courier, monospace;
+    :root {
+      --neon-cyan: #00f0ff;
+      --neon-green: #00ff66;
+      --neon-red: #ff0055;
+      --bg-dark: #030712;
+      --hud-panel: rgba(3, 15, 29, 0.75);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
       overflow: hidden;
+      background-color: var(--bg-dark);
+      color: #e2e8f0;
+    }
+
+    #viewport-container {
+      position: absolute;
+      top: 0;
+      left: 0;
       width: 100vw;
       height: 100vh;
+      z-index: 1;
     }
-    #viewport-container { position: absolute; inset: 0; z-index: 1; }
-    #hud-overlay {
+
+    /* HUD Interface Overlay */
+    .hud-layer {
       position: absolute;
-      inset: 0;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
       z-index: 10;
       pointer-events: none;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      padding: 16px;
+      padding: env(safe-area-inset-top, 24px) 20px env(safe-area-inset-bottom, 24px) 20px;
     }
-    .hud-header, .hud-footer {
+
+    .interactive {
+      pointer-events: auto;
+    }
+
+    /* Top Status Bar */
+    .hud-top {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      background: rgba(3, 7, 18, 0.75);
-      border: 1px solid rgba(0, 240, 255, 0.3);
-      padding: 10px 16px;
-      border-radius: 6px;
-      backdrop-filter: blur(8px);
-      pointer-events: auto;
+      background: var(--hud-panel);
+      padding: 12px 16px;
+      border-radius: 8px;
+      border: 1px solid rgba(0, 240, 255, 0.25);
+      backdrop-filter: blur(10px);
     }
-    .status-badge {
-      display: inline-block;
+
+    .title-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .status-dot {
       width: 10px;
       height: 10px;
       border-radius: 50%;
-      background: #00ff66;
-      box-shadow: 0 0 8px #00ff66;
-      margin-right: 8px;
+      background: var(--neon-red);
+      box-shadow: 0 0 10px var(--neon-red);
+      transition: background 0.3s, box-shadow 0.3s;
     }
-    .btn {
-      background: rgba(0, 240, 255, 0.15);
-      border: 1px solid #00f0ff;
-      color: #00f0ff;
-      padding: 6px 14px;
-      font-family: inherit;
+
+    .app-title {
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      color: var(--neon-cyan);
+      text-transform: uppercase;
+    }
+
+    .badge-info {
       font-size: 11px;
-      cursor: pointer;
-      border-radius: 4px;
-      transition: all 0.2s;
+      font-weight: 700;
+      letter-spacing: 1px;
+      color: #94a3b8;
     }
-    .btn:active { background: #00f0ff; color: #000; }
-    #telemetry-panel {
-      position: absolute;
-      left: 16px;
-      top: 70px;
-      width: 260px;
-      background: rgba(3, 7, 18, 0.75);
-      border: 1px solid rgba(0, 240, 255, 0.3);
-      padding: 12px;
+
+    /* Bottom Info Card */
+    .hud-bottom {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .telemetry-card {
+      background: var(--hud-panel);
+      border: 1px solid rgba(0, 240, 255, 0.25);
+      border-radius: 8px;
+      padding: 14px 16px;
+      backdrop-filter: blur(10px);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .metric-col {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .metric-label {
+      font-size: 10px;
+      letter-spacing: 1.5px;
+      color: #64748b;
+      font-weight: 700;
+    }
+
+    .metric-value {
+      font-size: 13px;
+      font-weight: 700;
+      color: #f8fafc;
+      letter-spacing: 0.5px;
+    }
+
+    .hud-btn {
+      background: rgba(0, 240, 255, 0.1);
+      border: 1px solid var(--neon-cyan);
+      color: var(--neon-cyan);
+      padding: 12px 18px;
       border-radius: 6px;
-      font-size: 11px;
-      line-height: 1.6;
-      pointer-events: auto;
-      z-index: 10;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      font-size: 12px;
+      text-transform: uppercase;
+      outline: none;
+      transition: background 0.2s;
     }
-    .telemetry-val { color: #fff; font-weight: bold; }
+
+    .hud-btn:active {
+      background: rgba(0, 240, 255, 0.35);
+    }
   </style>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
+
+  <!-- Three.js 3D Canvas -->
   <div id="viewport-container"></div>
 
-  <div id="hud-overlay">
-    <header class="hud-header">
-      <div>
-        <span class="status-badge" id="net-badge"></span>
-        <strong style="letter-spacing: 2px;">PROJECT HRISHI // DESK HUD</strong>
+  <!-- HUD Overlay -->
+  <div class="hud-layer">
+    <!-- Header -->
+    <div class="hud-top interactive">
+      <div class="title-group">
+        <div id="net-badge" class="status-dot"></div>
+        <div class="app-title">HRISHI // CORE</div>
       </div>
-      <div>
-        <button class="btn" id="btn-ble">CONNECT WATCH (BLE)</button>
-        <button class="btn" id="btn-view" style="margin-left: 8px;">RESET ORBIT</button>
-      </div>
-    </header>
-
-    <div id="telemetry-panel">
-      <div style="border-bottom: 1px solid rgba(0,240,255,0.2); margin-bottom: 6px; padding-bottom: 4px;">
-        <strong>NODE TELEMETRY (ALPHA L4)</strong>
-      </div>
-      <div>CORE IP: <span class="telemetry-val">92.4.87.82</span></div>
-      <div>PORT: <span class="telemetry-val">8000</span></div>
-      <div>LAT/LON: <span class="telemetry-val" id="gps-val">LOCATING...</span></div>
-      <div>USERS TRACKED: <span class="telemetry-val" id="users-count">1</span></div>
-      <div>KINETIC LINK: <span class="telemetry-val" id="ble-status">DISCONNECTED</span></div>
+      <div id="ble-status" class="badge-info">STANDBY</div>
     </div>
 
-    <footer class="hud-footer">
-      <span style="font-size: 11px; opacity: 0.8;">SUBSIDIARIES: AIA CORP [STANDBY] | FINTECH [STANDBY]</span>
-      <span style="font-size: 11px; color: #7000ff;">SYSTEM STATUS: NOMINAL (120Hz)</span>
-    </footer>
+    <!-- Bottom Dashboard -->
+    <div class="hud-bottom">
+      <div class="telemetry-card interactive">
+        <div class="metric-col">
+          <span class="metric-label">GPS COORDINATES</span>
+          <span id="gps-val" class="metric-value">ACQUIRING FIX...</span>
+        </div>
+        <button id="btn-reset" class="hud-btn interactive">RESET CAM</button>
+      </div>
+    </div>
   </div>
 
-<script>
+  <script>
     const OCI_HOST = "92.4.87.82:8000";
+    let scene, camera, renderer, globe, beaconsGroup, controls;
     let ws = null;
-    let scene, camera, renderer, globe, beaconsGroup;
-    let watchDevice = null;
 
     function setDebug(msg) {
       const el = document.getElementById("ble-status");
       if (el) el.innerText = msg;
     }
 
-    // --- 1. Three.js Holographic Globe ---
+    // --- 1. Holographic Earth Visualization ---
     function init3D() {
       const container = document.getElementById("viewport-container");
       scene = new THREE.Scene();
       
       camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-      camera.position.z = 240;
+      camera.position.set(0, 0, 240);
 
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       container.appendChild(renderer.domElement);
 
-      const geometry = new THREE.SphereGeometry(70, 36, 36);
-      const material = new THREE.MeshBasicMaterial({
+      // Touch Orbit Controls (drag to spin, pinch to zoom)
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controls.rotateSpeed = 0.7;
+      controls.zoomSpeed = 1.1;
+      controls.minDistance = 85;
+      controls.maxDistance = 350;
+      controls.enablePan = false;
+
+      // Earth Holographic Surface
+      const textureLoader = new THREE.TextureLoader();
+      const earthTex = textureLoader.load(
+        "https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_atmos_2048.jpg"
+      );
+
+      const globeGeo = new THREE.SphereGeometry(70, 64, 64);
+      const globeMat = new THREE.MeshPhongMaterial({
+        map: earthTex,
+        color: 0x00d4ff,
+        emissive: 0x001a33,
+        transparent: true,
+        opacity: 0.88,
+        shininess: 15
+      });
+      globe = new THREE.Mesh(globeGeo, globeMat);
+      scene.add(globe);
+
+      // Atmospheric Grid Outer Shell
+      const gridGeo = new THREE.SphereGeometry(71.8, 36, 36);
+      const gridMat = new THREE.MeshBasicMaterial({
         color: 0x00f0ff,
         wireframe: true,
         transparent: true,
-        opacity: 0.35
+        opacity: 0.2
       });
-      globe = new THREE.Mesh(geometry, material);
-      scene.add(globe);
+      const gridMesh = new THREE.Mesh(gridGeo, gridMat);
+      globe.add(gridMesh);
 
-      const coreGeo = new THREE.SphereGeometry(69, 32, 32);
-      const coreMat = new THREE.MeshBasicMaterial({ color: 0x030712 });
-      globe.add(new THREE.Mesh(coreGeo, coreMat));
+      // Holographic Lighting
+      const ambientLight = new THREE.AmbientLight(0x00f0ff, 0.9);
+      scene.add(ambientLight);
+
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+      dirLight.position.set(100, 100, 150);
+      scene.add(dirLight);
 
       beaconsGroup = new THREE.Group();
       globe.add(beaconsGroup);
 
-      addStaticBeacon(19.0760, 72.8777, "MUMBAI", 0x00f0ff);
-      addStaticBeacon(40.7128, -74.0060, "WALL_ST", 0x00ff66);
-      addStaticBeacon(51.5074, -0.1278, "LONDON", 0x7000ff);
-      addStaticBeacon(35.6762, 139.6503, "TOKYO", 0xffaa00);
+      // Global reference stations
+      addStaticBeacon(19.0760, 72.8777, 0x00f0ff); // Mumbai
+      addStaticBeacon(40.7128, -74.0060, 0x00ff66); // New York
+      addStaticBeacon(51.5074, -0.1278, 0x7000ff);  // London
+      addStaticBeacon(35.6762, 139.6503, 0xffaa00); // Tokyo
 
       window.addEventListener("resize", onWindowResize);
       animate();
@@ -167,9 +282,9 @@
       );
     }
 
-    function addStaticBeacon(lat, lon, label, color) {
-      const pos = latLonToVector3(lat, lon, 70);
-      const geo = new THREE.SphereGeometry(1.4, 8, 8);
+    function addStaticBeacon(lat, lon, color) {
+      const pos = latLonToVector3(lat, lon, 71);
+      const geo = new THREE.SphereGeometry(1.6, 8, 8);
       const mat = new THREE.MeshBasicMaterial({ color: color });
       const pin = new THREE.Mesh(geo, mat);
       pin.position.copy(pos);
@@ -178,9 +293,9 @@
 
     function updateUserPin(userId, lat, lon) {
       let pin = scene.getObjectByName("user_" + userId);
-      const pos = latLonToVector3(lat, lon, 71);
+      const pos = latLonToVector3(lat, lon, 72);
       if (!pin) {
-        const geo = new THREE.SphereGeometry(2.0, 10, 10);
+        const geo = new THREE.SphereGeometry(2.5, 12, 12);
         const mat = new THREE.MeshBasicMaterial({ color: 0xff0055 });
         pin = new THREE.Mesh(geo, mat);
         pin.name = "user_" + userId;
@@ -191,7 +306,10 @@
 
     function animate() {
       requestAnimationFrame(animate);
-      if (globe) globe.rotation.y += 0.0012;
+      if (globe && (!controls || !controls.state || controls.state === -1)) {
+        globe.rotation.y += 0.0006;
+      }
+      if (controls) controls.update();
       if (renderer && scene && camera) renderer.render(scene, camera);
     }
 
@@ -202,17 +320,17 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
     }
 
-    // --- 2. WebSocket Telemetry Gateway ---
+    // --- 2. Live WebSocket Link ---
     function connectSocket() {
       const badge = document.getElementById("net-badge");
-      setDebug("CONNECTING WS...");
+      setDebug("CONNECTING...");
 
       try {
         ws = new WebSocket("ws://" + OCI_HOST + "/ws/phone_nord_node?token=ENCRYPTED_ALPHA_ROOT_TOKEN");
 
         ws.onopen = () => {
-          badge.style.background = "#00ff66";
-          badge.style.boxShadow = "0 0 8px #00ff66";
+          badge.style.background = "var(--neon-green)";
+          badge.style.boxShadow = "0 0 10px var(--neon-green)";
           setDebug("WS ONLINE");
         };
 
@@ -225,22 +343,22 @@
           } catch (e) {}
         };
 
-        ws.onerror = (err) => {
+        ws.onerror = () => {
           badge.style.background = "#ffaa00";
-          setDebug("WS ERR: CHECK CLEARTEXT");
+          setDebug("WS RECONNECTING");
         };
 
         ws.onclose = () => {
-          badge.style.background = "#ff0055";
-          badge.style.boxShadow = "0 0 8px #ff0055";
-          setTimeout(connectSocket, 4000);
+          badge.style.background = "var(--neon-red)";
+          badge.style.boxShadow = "0 0 10px var(--neon-red)";
+          setTimeout(connectSocket, 3500);
         };
       } catch (err) {
-        setDebug("WS INIT FAILED");
+        setDebug("WS INIT ERR");
       }
     }
 
-    // --- 3. GPS Pipeline with Dynamic Prompt ---
+    // --- 3. High-Accuracy GPS Sensor Feed ---
     function initGPS() {
       if (!navigator.geolocation) {
         document.getElementById("gps-val").innerText = "GEO NOT SUPPORTED";
@@ -252,7 +370,7 @@
           handlePos(pos);
           navigator.geolocation.watchPosition(handlePos, handleGeoErr, {
             enableHighAccuracy: true,
-            maximumAge: 5000,
+            maximumAge: 4000,
             timeout: 10000
           });
         },
@@ -264,7 +382,7 @@
     function handlePos(pos) {
       const lat = pos.coords.latitude;
       const lon = pos.coords.longitude;
-      document.getElementById("gps-val").innerText = lat.toFixed(4) + ", " + lon.toFixed(4);
+      document.getElementById("gps-val").innerText = lat.toFixed(4) + "°, " + lon.toFixed(4) + "°";
       updateUserPin(1, lat, lon);
 
       fetch("http://" + OCI_HOST + "/api/telemetry/geo", {
@@ -284,9 +402,10 @@
       document.getElementById("gps-val").innerText = "PERM DENIED (" + err.code + ")";
     }
 
-    // --- 4. Controls ---
-    document.getElementById("btn-view").addEventListener("click", () => {
-      if (camera) camera.position.z = 240;
+    // --- 4. Controls Reset ---
+    document.getElementById("btn-reset").addEventListener("click", () => {
+      if (controls) controls.reset();
+      if (camera) camera.position.set(0, 0, 240);
     });
 
     window.addEventListener("DOMContentLoaded", () => {
