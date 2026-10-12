@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>HRISHI</title>
   
-  <!-- Three.js for 3D Globe -->
+  <!-- Three.js (Mode 1: Holographic Globe) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
@@ -13,10 +13,10 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- Leaflet Offline Storage Engine (dexie / indexedDB wrapper) -->
+  <!-- Dexie (IndexedDB Storage for Local Tiles) -->
   <script src="https://unpkg.com/dexie@3.2.4/dist/dexie.min.js"></script>
 
-  <!-- Leaflet Routing Machine (Google Maps Directions) -->
+  <!-- Leaflet Routing Engine -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
   <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
 
@@ -36,7 +36,6 @@
     }
     #satellite-container { display: none; z-index: 10; }
 
-    /* Top HUD Header */
     .hud-header {
       position: absolute; top: 12px; left: 12px; right: 12px;
       display: flex; justify-content: space-between; align-items: center;
@@ -49,30 +48,6 @@
     }
     .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--neon-red); }
 
-    /* Navigation / Search Overlay */
-    #nav-search-bar {
-      position: absolute; top: 60px; left: 12px; right: 12px;
-      z-index: 100; display: none; gap: 8px;
-    }
-    #search-input {
-      flex: 1; background: var(--panel-bg); border: 1px solid var(--border-cyan);
-      color: #fff; padding: 10px 14px; font-family: monospace; border-radius: 4px;
-      outline: none;
-    }
-    .nav-btn {
-      background: var(--panel-bg); color: var(--neon-cyan); border: 1px solid var(--border-cyan);
-      padding: 10px 14px; border-radius: 4px; cursor: pointer; font-weight: bold; font-family: monospace;
-    }
-
-    /* Routing summary card */
-    #route-summary {
-      position: absolute; top: 110px; left: 12px; right: 12px;
-      background: var(--panel-bg); border: 1px solid var(--neon-green);
-      color: #fff; padding: 8px 12px; font-size: 11px; z-index: 100;
-      border-radius: 4px; display: none;
-    }
-
-    /* Mode Controls */
     .mode-controls {
       position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
       display: flex; gap: 10px; z-index: 100;
@@ -88,13 +63,6 @@
       border-color: var(--neon-cyan);
       box-shadow: 0 0 10px var(--neon-cyan);
     }
-
-    /* Cache status button */
-    #cache-btn {
-      color: var(--neon-green); border-color: rgba(0, 255, 102, 0.4);
-    }
-
-    /* Hide standard bulky routing machine panels to keep HUD sleek */
     .leaflet-routing-container { display: none !important; }
     .leaflet-container { background: #000; }
   </style>
@@ -104,36 +72,24 @@
   <!-- Mode 1: 3D Globe -->
   <div id="globe-container"></div>
 
-  <!-- Mode 2: Google Maps / Satellite Tactical View -->
+  <!-- Mode 2: Tactical Satellite -->
   <div id="satellite-container"></div>
 
-  <!-- HUD Top Header -->
+  <!-- HUD Status Bar -->
   <div class="hud-header">
     <div class="status-badge">
       <div id="net-badge" class="status-dot"></div>
       <span id="node-status" style="color: var(--neon-cyan);">ALPHA // SYS INIT</span>
     </div>
     <div class="status-badge">
-      <span id="gps-coords" style="color: #fff;">GPS: ACQUIRING</span>
+      <span id="offline-status" style="color: var(--neon-green);">SECTOR: ACQUIRING</span>
     </div>
   </div>
 
-  <!-- Search & Navigation Box -->
-  <div id="nav-search-bar">
-    <input type="text" id="search-input" placeholder="Enter destination (e.g. airport, street, landmark)..." />
-    <button class="nav-btn" onclick="searchDestination()">ROUTE</button>
-    <button class="nav-btn" onclick="clearNavigation()" style="color: var(--neon-red);">CLEAR</button>
-  </div>
-
-  <div id="route-summary">
-    <span id="route-info" style="color: var(--neon-green); font-weight: bold;"></span>
-  </div>
-
-  <!-- Mode Switcher -->
+  <!-- Mode Selector -->
   <div class="mode-controls">
     <button id="btn-intel" class="mode-btn active" onclick="setMode('intel')">Global Intel</button>
-    <button id="btn-track" class="mode-btn" onclick="setMode('track')">Tactical Maps</button>
-    <button id="cache-btn" class="mode-btn" onclick="cacheCurrentArea()">Cache Offline</button>
+    <button id="btn-track" class="mode-btn" onclick="setMode('track')">Tactical Satellite</button>
   </div>
 
   <script>
@@ -144,29 +100,28 @@
     let map = null;
     let markers = {};
     let myPosition = { lat: 0, lon: 0 };
-    let routingControl = null;
-    let activeLayerType = "satellite"; // or 'streets'
+    let sectorCircle = null;
 
-    // --- IndexedDB Offline Storage Setup ---
+    // --- ROLLING CACHE CONSTANTS ---
+    let currentAnchor = null;
+    const DRIFT_THRESHOLD_KM = 30.0;
+    const BUFFER_RADIUS_KM = 60.0;
+
+    // --- IndexedDB Setup ---
     const db = new Dexie("HrishiOfflineMapTiles");
-    db.version(1).stores({
-      tiles: "key,data,timestamp"
-    });
+    db.version(1).stores({ tiles: "key,data,timestamp" });
 
-    // Custom Leaflet TileLayer that saves & reads from IndexedDB
     const OfflineTileLayer = L.TileLayer.extend({
       createTile: function(coords, done) {
         const tile = document.createElement('img');
         const url = this.getTileUrl(coords);
         const tileKey = `${coords.z}_${coords.x}_${coords.y}`;
 
-        // 1. Check local IndexedDB storage first
         db.tiles.get(tileKey).then((savedTile) => {
           if (savedTile && savedTile.data) {
             tile.src = savedTile.data;
             done(null, tile);
           } else {
-            // 2. Fetch over network and cache for offline
             fetch(url)
               .then(res => res.blob())
               .then(blob => {
@@ -179,9 +134,7 @@
                   done(null, tile);
                 };
               })
-              .catch(err => {
-                done(err, tile);
-              });
+              .catch(err => done(err, tile));
           }
         }).catch(() => {
           tile.src = url;
@@ -192,126 +145,85 @@
       }
     });
 
-    // --- Mode Toggle ---
+    function getDistanceKm(lat1, lon1, lat2, lon2) {
+      const R = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+    }
+
+    async function checkRollingBuffer(lat, lon) {
+      if (!currentAnchor) {
+        await refreshRollingPatch(lat, lon);
+        return;
+      }
+      const drift = getDistanceKm(currentAnchor.lat, currentAnchor.lon, lat, lon);
+      if (drift >= DRIFT_THRESHOLD_KM) {
+        await refreshRollingPatch(lat, lon);
+      }
+    }
+
+    async function refreshRollingPatch(lat, lon) {
+      const badge = document.getElementById("offline-status");
+      badge.textContent = "SYNCING SECTOR...";
+      badge.style.color = "var(--neon-cyan)";
+
+      try {
+        await fetch(`http://${OCI_HOST}/api/map/patch-metadata?lat=${lat}&lon=${lon}&radius=${BUFFER_RADIUS_KM}`);
+        await db.tiles.clear(); // Evict obsolete patch
+
+        currentAnchor = { lat, lon };
+        badge.textContent = `SECTOR CACHED (${BUFFER_RADIUS_KM}km)`;
+        badge.style.color = "var(--neon-green)";
+
+        if (map) {
+          if (sectorCircle) map.removeLayer(sectorCircle);
+          sectorCircle = L.circle([lat, lon], {
+            radius: BUFFER_RADIUS_KM * 1000,
+            color: '#00f0ff',
+            weight: 1,
+            fillColor: '#00f0ff',
+            fillOpacity: 0.05
+          }).addTo(map);
+        }
+      } catch (err) {
+        badge.textContent = "OFFLINE // PERSISTED";
+        badge.style.color = "var(--neon-green)";
+      }
+    }
+
     function setMode(mode) {
       currentMode = mode;
       document.getElementById("btn-intel").classList.toggle("active", mode === "intel");
       document.getElementById("btn-track").classList.toggle("active", mode === "track");
 
-      const navBar = document.getElementById("nav-search-bar");
       if (mode === "intel") {
         document.getElementById("globe-container").style.display = "block";
         document.getElementById("satellite-container").style.display = "none";
-        navBar.style.display = "none";
       } else {
         document.getElementById("globe-container").style.display = "none";
         document.getElementById("satellite-container").style.display = "block";
-        navBar.style.display = "flex";
-        initTacticalMap();
-        if (myPosition.lat !== 0) {
-          map.setView([myPosition.lat, myPosition.lon], 16);
-        }
+        initSatelliteMap();
+        if (myPosition.lat !== 0) map.setView([myPosition.lat, myPosition.lon], 15);
       }
     }
 
-    // --- Tactical Map (Google Maps Style + Satellite + Offline Engine) ---
-    function initTacticalMap() {
+    function initSatelliteMap() {
       if (map) {
         map.invalidateSize();
         return;
       }
-
-      map = L.map('satellite-container', { zoomControl: false }).setView([20.5937, 78.9629], 5);
-
-      // Default high-res offline-capable satellite layer (Esri)
-      const offlineSatLayer = new OfflineTileLayer(
+      map = L.map('satellite-container', { zoomControl: false }).setView([26.8467, 80.9462], 12);
+      const sat = new OfflineTileLayer(
         'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
         { maxZoom: 19, attribution: 'Esri Satellite' }
       );
-      offlineSatLayer.addTo(map);
-
-      // Allow tapping anywhere on map to route there instantly
-      map.on('click', function(e) {
-        startNavigationTo(e.latlng.lat, e.latlng.lng, "Pinned Destination");
-      });
+      sat.addTo(map);
     }
 
-    // --- Google Maps Routing Engine ---
-    function startNavigationTo(destLat, destLon, title) {
-      if (!myPosition.lat || !myPosition.lon) {
-        alert("Acquiring GPS location... please try in 3 seconds.");
-        return;
-      }
-
-      if (routingControl) {
-        map.removeControl(routingControl);
-      }
-
-      routingControl = L.Routing.control({
-        waypoints: [
-          L.latLng(myPosition.lat, myPosition.lon),
-          L.latLng(destLat, destLon)
-        ],
-        lineOptions: {
-          styles: [{ color: '#00ff66', opacity: 0.9, weight: 6 }]
-        },
-        createMarker: function() { return null; }, // Keep custom minimalist pins
-        addWaypoints: false,
-        draggableWaypoints: false,
-        fitSelectedRoutes: true
-      }).addTo(map);
-
-      routingControl.on('routesfound', function(e) {
-        const routes = e.routes;
-        const summary = routes[0].summary;
-        const distKm = (summary.totalDistance / 1000).toFixed(1);
-        const timeMin = Math.round(summary.totalTime / 60);
-
-        const summaryBox = document.getElementById("route-summary");
-        document.getElementById("route-info").textContent = 
-          `NAV ACTIVE // DIST: ${distKm} KM | ETA: ${timeMin} MIN [${title}]`;
-        summaryBox.style.display = "block";
-      });
-    }
-
-    // --- Geocoding / Address Search ---
-    async function searchDestination() {
-      const query = document.getElementById("search-input").value;
-      if (!query.trim()) return;
-
-      try {
-        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
-        const data = await res.json();
-        if (data && data.length > 0) {
-          const target = data[0];
-          startNavigationTo(parseFloat(target.lat), parseFloat(target.lon), target.display_name.split(',')[0]);
-        } else {
-          alert("Location not found.");
-        }
-      } catch (err) {
-        alert("Search requires internet connection for geocoding lookup.");
-      }
-    }
-
-    function clearNavigation() {
-      if (routingControl) {
-        map.removeControl(routingControl);
-        routingControl = null;
-      }
-      document.getElementById("route-summary").style.display = "none";
-    }
-
-    // --- Cache Surrounding Area for Offline Use ---
-    async function cacheCurrentArea() {
-      if (!myPosition.lat || !myPosition.lon) {
-        alert("GPS not ready.");
-        return;
-      }
-      const count = await db.tiles.count();
-      alert(`Auto-caching active: ${count} map tiles stored in local offline memory. As you navigate or zoom, tiles persist permanently.`);
-    }
-
-    // --- Multi-Node Family & Alpha Tracking Pins ---
     function updateMapPins(nodes) {
       if (!map) return;
       for (const id in nodes) {
@@ -321,17 +233,15 @@
         const label = isSelf ? "YOU (ALPHA)" : (node.name || id);
 
         if (!markers[id]) {
-          const circle = L.circleMarker([node.lat, node.lon], {
+          markers[id] = L.circleMarker([node.lat, node.lon], {
             radius: 8, fillColor: color, color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9
-          }).addTo(map).bindPopup(`<b>${label}</b><br>Lat: ${node.lat.toFixed(4)}<br>Lon: ${node.lon.toFixed(4)}`);
-          markers[id] = circle;
+          }).addTo(map).bindPopup(`<b>${label}</b>`);
         } else {
           markers[id].setLatLng([node.lat, node.lon]);
         }
       }
     }
 
-    // --- Three.js Globe Engine ---
     let scene, camera, renderer, controls, cloudsMesh;
     function initGlobe() {
       const container = document.getElementById("globe-container");
@@ -347,27 +257,26 @@
       controls = new THREE.OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
       controls.dampingFactor = 0.05;
-      controls.minDistance = 75;
-      controls.maxDistance = 350;
 
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
-      scene.add(ambientLight);
-
+      scene.add(new THREE.AmbientLight(0xffffff, 0.9));
       const texLoader = new THREE.TextureLoader();
-      const globeGeo = new THREE.SphereGeometry(70, 64, 64);
-      const globeMat = new THREE.MeshPhongMaterial({
-        map: texLoader.load("https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg"),
-        specular: 0x222222, shininess: 15
-      });
-      const globe = new THREE.Mesh(globeGeo, globeMat);
+
+      const globe = new THREE.Mesh(
+        new THREE.SphereGeometry(70, 64, 64),
+        new THREE.MeshPhongMaterial({
+          map: texLoader.load("https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg"),
+          specular: 0x222222, shininess: 15
+        })
+      );
       scene.add(globe);
 
-      const cloudGeo = new THREE.SphereGeometry(71.2, 64, 64);
-      const cloudMat = new THREE.MeshPhongMaterial({
-        map: texLoader.load("https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_clouds_1024.png"),
-        transparent: true, opacity: 0.4
-      });
-      cloudsMesh = new THREE.Mesh(cloudGeo, cloudMat);
+      cloudsMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(71.2, 64, 64),
+        new THREE.MeshPhongMaterial({
+          map: texLoader.load("https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_clouds_1024.png"),
+          transparent: true, opacity: 0.4
+        })
+      );
       scene.add(cloudsMesh);
 
       function animate() {
@@ -379,46 +288,35 @@
       animate();
     }
 
-    // --- WebSocket Telemetry Loop ---
     function connectSocket() {
-      const badge = document.getElementById("net-badge");
-      const statusText = document.getElementById("node-status");
-
       try {
         ws = new WebSocket("ws://" + OCI_HOST + "/ws/" + CLIENT_ID + "?token=ENCRYPTED_ALPHA_ROOT_TOKEN");
-
         ws.onopen = () => {
-          badge.style.background = "var(--neon-green)";
-          statusText.textContent = "ALPHA // ONLINE";
+          document.getElementById("net-badge").style.background = "var(--neon-green)";
+          document.getElementById("node-status").textContent = "ALPHA // ONLINE";
         };
-
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            if (data.type === "FLEET_GPS_SYNC" && data.nodes) {
-              updateMapPins(data.nodes);
-            }
+            if (data.type === "FLEET_GPS_SYNC" && data.nodes) updateMapPins(data.nodes);
           } catch (e) {}
         };
-
         ws.onclose = () => {
-          badge.style.background = "var(--neon-red)";
-          statusText.textContent = "OFFLINE // RETRYING";
+          document.getElementById("net-badge").style.background = "var(--neon-red)";
+          document.getElementById("node-status").textContent = "STANDBY // OFFLINE";
           setTimeout(connectSocket, 4000);
         };
       } catch (err) {
-        badge.style.background = "var(--neon-red)";
+        document.getElementById("net-badge").style.background = "var(--neon-red)";
       }
     }
 
-    // --- High Accuracy GPS Streamer ---
     function initGeolocation() {
       if ("geolocation" in navigator) {
         navigator.geolocation.watchPosition((pos) => {
           myPosition.lat = pos.coords.latitude;
           myPosition.lon = pos.coords.longitude;
-          document.getElementById("gps-coords").textContent = 
-            `GPS: ${myPosition.lat.toFixed(4)}, ${myPosition.lon.toFixed(4)}`;
+          checkRollingBuffer(myPosition.lat, myPosition.lon);
 
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
