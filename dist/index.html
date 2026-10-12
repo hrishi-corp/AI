@@ -215,7 +215,7 @@
       controls.dampingFactor = 0.08;
       controls.rotateSpeed = 0.8;
       controls.zoomSpeed = 1.2;
-      controls.minDistance = 85;
+      controls.minDistance = 73;
       controls.maxDistance = 350;
       controls.enablePan = false;
 
@@ -255,11 +255,6 @@
 
       beaconsGroup = new THREE.Group();
       globe.add(beaconsGroup);
-
-      addStaticBeacon(19.0760, 72.8777, 0x00f0ff);
-      addStaticBeacon(40.7128, -74.0060, 0x00ff66);
-      addStaticBeacon(51.5074, -0.1278, 0x7000ff);
-      addStaticBeacon(35.6762, 139.6503, 0xffaa00);
 
       setupTouchInteraction(renderer.domElement);
       window.addEventListener("resize", onWindowResize);
@@ -347,7 +342,7 @@
       setDebug("CONNECTING...");
 
       try {
-        const socketUrl = "ws://" + OCI_HOST + "/ws/phone_nord_node?token=ENCRYPTED_ALPHA_ROOT_TOKEN";
+        const socketUrl = "ws://92.4.87.82:8000/ws/phone_nord_node?token=ENCRYPTED_ALPHA_ROOT_TOKEN";
         ws = new WebSocket(socketUrl);
 
         ws.onopen = () => {
@@ -364,26 +359,25 @@
             } else if (msg.type === "USER_GPS_UPDATE") {
               updateUserPin(msg.lat, msg.lon);
             }
-          } catch (e) {
-            console.log("Raw message:", event.data);
-          }
+          } catch (e) {}
         };
 
         ws.onerror = (err) => {
           badge.style.background = "var(--neon-red)";
           badge.style.boxShadow = "0 0 10px var(--neon-red)";
-          setDebug("WS SEC BLOCKED");
+          setDebug("WS ERR: HANDSHAKE REFUSED");
         };
 
-        ws.onclose = () => {
+        ws.onclose = (event) => {
           badge.style.background = "var(--neon-red)";
           badge.style.boxShadow = "0 0 10px var(--neon-red)";
-          setDebug("RETRYING...");
-          setTimeout(connectSocket, 3500);
+          // Displays the exact WebSocket close code (e.g., 1006, 1008, 404)
+          setDebug("WS CLOSED: " + event.code);
+          setTimeout(connectSocket, 4000);
         };
       } catch (err) {
         badge.style.background = "var(--neon-red)";
-        setDebug("WS FAIL");
+        setDebug("CATCH: " + err.message);
       }
     }
 
