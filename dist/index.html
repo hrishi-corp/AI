@@ -107,13 +107,18 @@
     </footer>
   </div>
 
-  <script>
+<script>
     const OCI_HOST = "92.4.87.82:8000";
     let ws = null;
     let scene, camera, renderer, globe, beaconsGroup;
     let watchDevice = null;
 
-    // --- 1. Three.js 120Hz Holographic Globe Initialization ---
+    function setDebug(msg) {
+      const el = document.getElementById("ble-status");
+      if (el) el.innerText = msg;
+    }
+
+    // --- 1. Three.js Holographic Globe ---
     function init3D() {
       const container = document.getElementById("viewport-container");
       scene = new THREE.Scene();
@@ -126,7 +131,6 @@
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       container.appendChild(renderer.domElement);
 
-      // Spherical Wireframe Hologram Globe
       const geometry = new THREE.SphereGeometry(70, 36, 36);
       const material = new THREE.MeshBasicMaterial({
         color: 0x00f0ff,
@@ -137,7 +141,6 @@
       globe = new THREE.Mesh(geometry, material);
       scene.add(globe);
 
-      // Inner Dark Core
       const coreGeo = new THREE.SphereGeometry(69, 32, 32);
       const coreMat = new THREE.MeshBasicMaterial({ color: 0x030712 });
       globe.add(new THREE.Mesh(coreGeo, coreMat));
@@ -145,7 +148,6 @@
       beaconsGroup = new THREE.Group();
       globe.add(beaconsGroup);
 
-      // Global Hub Beacons (Mumbai, Wall St, London, Tokyo)
       addStaticBeacon(19.0760, 72.8777, "MUMBAI", 0x00f0ff);
       addStaticBeacon(40.7128, -74.0060, "WALL_ST", 0x00ff66);
       addStaticBeacon(51.5074, -0.1278, "LONDON", 0x7000ff);
@@ -189,94 +191,104 @@
 
     function animate() {
       requestAnimationFrame(animate);
-      globe.rotation.y += 0.0012;
-      renderer.render(scene, camera);
+      if (globe) globe.rotation.y += 0.0012;
+      if (renderer && scene && camera) renderer.render(scene, camera);
     }
 
     function onWindowResize() {
+      if (!camera || !renderer) return;
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     }
 
-    // --- 2. WebSocket Telemetry Gateway to OCI Core ---
+    // --- 2. WebSocket Telemetry Gateway ---
     function connectSocket() {
       const badge = document.getElementById("net-badge");
-      ws = new WebSocket("ws://" + OCI_HOST + "/ws/phone_nord_node?token=ENCRYPTED_ALPHA_ROOT_TOKEN");
+      setDebug("CONNECTING WS...");
 
-      ws.onopen = () => {
-        badge.style.background = "#00ff66";
-        badge.style.boxShadow = "0 0 8px #00ff66";
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === "USER_GPS_UPDATE") {
-            updateUserPin(msg.user_id, msg.lat, msg.lon);
-          } else if (msg.type === "HUD_KINETIC_TRIGGER") {
-            if (msg.action === "ZOOM_IN") camera.position.z = Math.max(120, camera.position.z - 15);
-            if (msg.action === "ZOOM_OUT") camera.position.z = Math.min(300, camera.position.z + 15);
-          }
-        } catch (e) {}
-      };
-
-      ws.onclose = () => {
-        badge.style.background = "#ff0055";
-        badge.style.boxShadow = "0 0 8px #ff0055";
-        setTimeout(connectSocket, 3000);
-      };
-    }
-
-    // --- 3. GPS Ingestion Pipeline ---
-    function initGPS() {
-      if ("geolocation" in navigator) {
-        navigator.geolocation.watchPosition(
-          (pos) => {
-            const lat = pos.coords.latitude;
-            const lon = pos.coords.longitude;
-            document.getElementById("gps-val").innerText = lat.toFixed(4) + ", " + lon.toFixed(4);
-            updateUserPin(1, lat, lon);
-
-            // Report position to OCI Server
-            fetch("http://" + OCI_HOST + "/api/telemetry/geo", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                user_id: 1,
-                lat: lat,
-                lon: lon,
-                altitude: pos.coords.altitude || 0,
-                speed: pos.coords.speed || 0
-              })
-            }).catch(() => {});
-          },
-          (err) => console.warn(err),
-          { enableHighAccuracy: true, maximumAge: 5000 }
-        );
-      }
-    }
-
-    // --- 4. Web Bluetooth Kinetic Bridge for Watch ---
-    document.getElementById("btn-ble").addEventListener("click", async () => {
       try {
-        watchDevice = await navigator.bluetooth.requestDevice({
-          acceptAllDevices: true,
-          optionalServices: ['heart_rate', 'battery_service', 0xfee0, 0xfee7]
-        });
-        document.getElementById("ble-status").innerText = "CONNECTED (" + watchDevice.name + ")";
-        document.getElementById("btn-ble").style.borderColor = "#00ff66";
-        document.getElementById("btn-ble").innerText = "WATCH PAIRED";
+        ws = new WebSocket("ws://" + OCI_HOST + "/ws/phone_nord_node?token=ENCRYPTED_ALPHA_ROOT_TOKEN");
+
+        ws.onopen = () => {
+          badge.style.background = "#00ff66";
+          badge.style.boxShadow = "0 0 8px #00ff66";
+          setDebug("WS ONLINE");
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === "USER_GPS_UPDATE") {
+              updateUserPin(msg.user_id, msg.lat, msg.lon);
+            }
+          } catch (e) {}
+        };
+
+        ws.onerror = (err) => {
+          badge.style.background = "#ffaa00";
+          setDebug("WS ERR: CHECK CLEARTEXT");
+        };
+
+        ws.onclose = () => {
+          badge.style.background = "#ff0055";
+          badge.style.boxShadow = "0 0 8px #ff0055";
+          setTimeout(connectSocket, 4000);
+        };
       } catch (err) {
-        console.warn("BLE Pairing dismissed:", err);
+        setDebug("WS INIT FAILED");
       }
-    });
+    }
 
+    // --- 3. GPS Pipeline with Dynamic Prompt ---
+    function initGPS() {
+      if (!navigator.geolocation) {
+        document.getElementById("gps-val").innerText = "GEO NOT SUPPORTED";
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          handlePos(pos);
+          navigator.geolocation.watchPosition(handlePos, handleGeoErr, {
+            enableHighAccuracy: true,
+            maximumAge: 5000,
+            timeout: 10000
+          });
+        },
+        handleGeoErr,
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    }
+
+    function handlePos(pos) {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      document.getElementById("gps-val").innerText = lat.toFixed(4) + ", " + lon.toFixed(4);
+      updateUserPin(1, lat, lon);
+
+      fetch("http://" + OCI_HOST + "/api/telemetry/geo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: 1,
+          lat: lat,
+          lon: lon,
+          altitude: pos.coords.altitude || 0,
+          speed: pos.coords.speed || 0
+        })
+      }).catch(() => {});
+    }
+
+    function handleGeoErr(err) {
+      document.getElementById("gps-val").innerText = "PERM DENIED (" + err.code + ")";
+    }
+
+    // --- 4. Controls ---
     document.getElementById("btn-view").addEventListener("click", () => {
-      camera.position.z = 240;
+      if (camera) camera.position.z = 240;
     });
 
-    // Boot Subsystems
     window.addEventListener("DOMContentLoaded", () => {
       init3D();
       connectSocket();
