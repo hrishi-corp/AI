@@ -13,7 +13,7 @@
       --neon-green: #00ff66;
       --neon-red: #ff0055;
       --bg-dark: #030712;
-      --hud-panel: rgba(3, 15, 29, 0.75);
+      --hud-panel: rgba(3, 15, 29, 0.85);
     }
 
     * {
@@ -43,7 +43,6 @@
       z-index: 1;
     }
 
-    /* HUD Interface Overlay */
     .hud-layer {
       position: absolute;
       top: 0;
@@ -62,7 +61,6 @@
       pointer-events: auto;
     }
 
-    /* Top Status Bar */
     .hud-top {
       display: flex;
       justify-content: space-between;
@@ -104,7 +102,6 @@
       color: #94a3b8;
     }
 
-    /* Bottom Info Card */
     .hud-bottom {
       display: flex;
       flex-direction: column;
@@ -153,7 +150,6 @@
       font-size: 12px;
       text-transform: uppercase;
       outline: none;
-      transition: background 0.2s;
     }
 
     .hud-btn:active {
@@ -163,12 +159,9 @@
 </head>
 <body>
 
-  <!-- Three.js 3D Canvas -->
   <div id="viewport-container"></div>
 
-  <!-- HUD Overlay -->
   <div class="hud-layer">
-    <!-- Header -->
     <div class="hud-top interactive">
       <div class="title-group">
         <div id="net-badge" class="status-dot"></div>
@@ -177,7 +170,6 @@
       <div id="ble-status" class="badge-info">STANDBY</div>
     </div>
 
-    <!-- Bottom Dashboard -->
     <div class="hud-bottom">
       <div class="telemetry-card interactive">
         <div class="metric-col">
@@ -194,12 +186,18 @@
     let scene, camera, renderer, globe, beaconsGroup, controls;
     let ws = null;
 
+    // Spin dynamics variables
+    let spinVelocity = 0.001; 
+    let isUserTouching = false;
+    let touchStartX = 0;
+    let touchStartTime = 0;
+
     function setDebug(msg) {
       const el = document.getElementById("ble-status");
       if (el) el.innerText = msg;
     }
 
-    // --- 1. Holographic Earth Visualization ---
+    // --- 1. Holographic Earth ---
     function init3D() {
       const container = document.getElementById("viewport-container");
       scene = new THREE.Scene();
@@ -212,17 +210,16 @@
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       container.appendChild(renderer.domElement);
 
-      // Touch Orbit Controls (drag to spin, pinch to zoom)
       controls = new THREE.OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
-      controls.dampingFactor = 0.05;
-      controls.rotateSpeed = 0.7;
-      controls.zoomSpeed = 1.1;
+      controls.dampingFactor = 0.08;
+      controls.rotateSpeed = 0.8;
+      controls.zoomSpeed = 1.2;
       controls.minDistance = 85;
       controls.maxDistance = 350;
       controls.enablePan = false;
 
-      // Earth Holographic Surface
+      // Holographic Globe Surface
       const textureLoader = new THREE.TextureLoader();
       const earthTex = textureLoader.load(
         "https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_atmos_2048.jpg"
@@ -240,7 +237,7 @@
       globe = new THREE.Mesh(globeGeo, globeMat);
       scene.add(globe);
 
-      // Atmospheric Grid Outer Shell
+      // Wireframe Outer Mesh
       const gridGeo = new THREE.SphereGeometry(71.8, 36, 36);
       const gridMat = new THREE.MeshBasicMaterial({
         color: 0x00f0ff,
@@ -248,13 +245,10 @@
         transparent: true,
         opacity: 0.2
       });
-      const gridMesh = new THREE.Mesh(gridGeo, gridMat);
-      globe.add(gridMesh);
+      globe.add(new THREE.Mesh(gridGeo, gridMat));
 
-      // Holographic Lighting
-      const ambientLight = new THREE.AmbientLight(0x00f0ff, 0.9);
-      scene.add(ambientLight);
-
+      // Lighting
+      scene.add(new THREE.AmbientLight(0x00f0ff, 0.9));
       const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
       dirLight.position.set(100, 100, 150);
       scene.add(dirLight);
@@ -262,14 +256,39 @@
       beaconsGroup = new THREE.Group();
       globe.add(beaconsGroup);
 
-      // Global reference stations
-      addStaticBeacon(19.0760, 72.8777, 0x00f0ff); // Mumbai
-      addStaticBeacon(40.7128, -74.0060, 0x00ff66); // New York
-      addStaticBeacon(51.5074, -0.1278, 0x7000ff);  // London
-      addStaticBeacon(35.6762, 139.6503, 0xffaa00); // Tokyo
+      addStaticBeacon(19.0760, 72.8777, 0x00f0ff);
+      addStaticBeacon(40.7128, -74.0060, 0x00ff66);
+      addStaticBeacon(51.5074, -0.1278, 0x7000ff);
+      addStaticBeacon(35.6762, 139.6503, 0xffaa00);
 
+      setupTouchInteraction(renderer.domElement);
       window.addEventListener("resize", onWindowResize);
       animate();
+    }
+
+    // Touch gesture physics: Stops on slow touch; flings into orbit on quick swipe
+    function setupTouchInteraction(dom) {
+      dom.addEventListener("pointerdown", (e) => {
+        isUserTouching = true;
+        touchStartX = e.clientX;
+        touchStartTime = performance.now();
+        spinVelocity = 0; // Immediately stops auto-rotation while interacting
+      });
+
+      dom.addEventListener("pointerup", (e) => {
+        isUserTouching = false;
+        const deltaX = e.clientX - touchStartX;
+        const deltaTime = Math.max(1, performance.now() - touchStartTime);
+        const swipeSpeed = Math.abs(deltaX) / deltaTime; // px per millisecond
+
+        if (swipeSpeed > 0.4) {
+          // Fast flick detected: resume spinning in swipe direction
+          spinVelocity = (deltaX > 0 ? 0.0035 : -0.0035) * Math.min(swipeSpeed, 1.5);
+        } else {
+          // Slow drag or tap: stay completely still
+          spinVelocity = 0;
+        }
+      });
     }
 
     function latLonToVector3(lat, lon, radius) {
@@ -291,14 +310,14 @@
       beaconsGroup.add(pin);
     }
 
-    function updateUserPin(userId, lat, lon) {
-      let pin = scene.getObjectByName("user_" + userId);
+    function updateUserPin(lat, lon) {
+      let pin = scene.getObjectByName("user_pin");
       const pos = latLonToVector3(lat, lon, 72);
       if (!pin) {
-        const geo = new THREE.SphereGeometry(2.5, 12, 12);
+        const geo = new THREE.SphereGeometry(2.8, 12, 12);
         const mat = new THREE.MeshBasicMaterial({ color: 0xff0055 });
         pin = new THREE.Mesh(geo, mat);
-        pin.name = "user_" + userId;
+        pin.name = "user_pin";
         globe.add(pin);
       }
       pin.position.copy(pos);
@@ -306,9 +325,11 @@
 
     function animate() {
       requestAnimationFrame(animate);
-      if (globe && (!controls || !controls.state || controls.state === -1)) {
-        globe.rotation.y += 0.0006;
+
+      if (globe && !isUserTouching && spinVelocity !== 0) {
+        globe.rotation.y += spinVelocity;
       }
+
       if (controls) controls.update();
       if (renderer && scene && camera) renderer.render(scene, camera);
     }
@@ -320,7 +341,7 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
     }
 
-    // --- 2. Live WebSocket Link ---
+    // --- 2. WebSocket Telemetry ---
     function connectSocket() {
       const badge = document.getElementById("net-badge");
       setDebug("CONNECTING...");
@@ -334,56 +355,58 @@
           setDebug("WS ONLINE");
         };
 
-        ws.onmessage = (event) => {
-          try {
-            const msg = JSON.parse(event.data);
-            if (msg.type === "USER_GPS_UPDATE") {
-              updateUserPin(msg.user_id, msg.lat, msg.lon);
-            }
-          } catch (e) {}
-        };
-
         ws.onerror = () => {
-          badge.style.background = "#ffaa00";
-          setDebug("WS RECONNECTING");
+          badge.style.background = "var(--neon-red)";
+          badge.style.boxShadow = "0 0 10px var(--neon-red)";
+          setDebug("WS ERROR");
         };
 
         ws.onclose = () => {
           badge.style.background = "var(--neon-red)";
           badge.style.boxShadow = "0 0 10px var(--neon-red)";
+          setDebug("RETRYING...");
           setTimeout(connectSocket, 3500);
         };
       } catch (err) {
-        setDebug("WS INIT ERR");
+        badge.style.background = "var(--neon-red)";
+        setDebug("WS FAIL");
       }
     }
 
-    // --- 3. High-Accuracy GPS Sensor Feed ---
+    // --- 3. Robust High-Accuracy GPS Pipeline ---
     function initGPS() {
       if (!navigator.geolocation) {
         document.getElementById("gps-val").innerText = "GEO NOT SUPPORTED";
         return;
       }
 
+      // First call coarse quick lock, then continuous watch with generous timeout
       navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          handlePos(pos);
-          navigator.geolocation.watchPosition(handlePos, handleGeoErr, {
-            enableHighAccuracy: true,
-            maximumAge: 4000,
-            timeout: 10000
+        (pos) => handlePos(pos),
+        (err) => {
+          // If high-accuracy times out, fallback to cellular/wifi location
+          navigator.geolocation.getCurrentPosition(handlePos, handleGeoErr, {
+            enableHighAccuracy: false,
+            timeout: 20000,
+            maximumAge: 60000
           });
         },
-        handleGeoErr,
-        { enableHighAccuracy: true, timeout: 10000 }
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: 30000 }
       );
+
+      // Continuous tracking
+      navigator.geolocation.watchPosition(handlePos, handleGeoErr, {
+        enableHighAccuracy: true,
+        timeout: 30000,
+        maximumAge: 10000
+      });
     }
 
     function handlePos(pos) {
       const lat = pos.coords.latitude;
       const lon = pos.coords.longitude;
       document.getElementById("gps-val").innerText = lat.toFixed(4) + "°, " + lon.toFixed(4) + "°";
-      updateUserPin(1, lat, lon);
+      updateUserPin(lat, lon);
 
       fetch("http://" + OCI_HOST + "/api/telemetry/geo", {
         method: "POST",
@@ -399,13 +422,15 @@
     }
 
     function handleGeoErr(err) {
-      document.getElementById("gps-val").innerText = "PERM DENIED (" + err.code + ")";
+      if (err.code === 1) document.getElementById("gps-val").innerText = "LOCATION OFF";
+      else if (err.code === 2) document.getElementById("gps-val").innerText = "NO GPS FIX";
+      else if (err.code === 3) document.getElementById("gps-val").innerText = "GPS TIMEOUT (RETRYING)";
     }
 
-    // --- 4. Controls Reset ---
     document.getElementById("btn-reset").addEventListener("click", () => {
       if (controls) controls.reset();
       if (camera) camera.position.set(0, 0, 240);
+      spinVelocity = 0.001; // Restores standard gentle orbit
     });
 
     window.addEventListener("DOMContentLoaded", () => {
